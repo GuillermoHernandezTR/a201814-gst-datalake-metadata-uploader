@@ -15,7 +15,7 @@ namespace BigQueryUpload
 
             var bigQueryService = new BigQueryService(configuration["GoogleCloud:ProjectId"]);
             var xmlUploader = new XmlUploader(bigQueryService);
-            xmlUploader.UploadXml(configuration["BigQuery:FilePath"], configuration["BigQuery:DatasetId"], configuration["TableId"]);
+            xmlUploader.UploadXml(configuration["BigQuery:FilePath"], configuration["BigQuery:DatasetId"], configuration["BigQuery:TableId"]);
         }
     }
 }

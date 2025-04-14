@@ -1,4 +1,7 @@
+using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 
 namespace BigQueryUpload
 {
@@ -13,14 +16,10 @@ namespace BigQueryUpload
 
         public void UploadXml(string directoryPath, string datasetId, string tableId)
         {
-            var files = Directory.GetFiles(directoryPath, "*.xsd");
-            foreach (var file in files)
+            List<string> files = Directory.GetFiles(directoryPath, "*.xsd").ToList();
+            foreach (string file in files)
             {
-                using (var reader = new StreamReader(file))
-                {
-                    var xmlContent = reader.ReadToEnd();
-                    _bigQueryService.UploadXmlToBigQuery(xmlContent, datasetId, tableId);
-                }
+                _bigQueryService.UploadXmlToBigQuery(file, datasetId, tableId);
             }
         }
     }

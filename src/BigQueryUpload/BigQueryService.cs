@@ -1,8 +1,10 @@
+using Google.Apis.Bigquery.v2.Data;
 using Google.Cloud.BigQuery.V2;
 using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 
 namespace BigQueryUpload
 {
@@ -19,26 +21,8 @@ namespace BigQueryUpload
         {
             Console.WriteLine($"Starting upload process for XML file: {xmlFilePath} to BigQuery table: {tableId}");
 
-            // Read and process the XML file
-            var xmlData = ReadXmlRecursively(xmlFilePath);
-
-            // Prepare the data for BigQuery
-            var rowsToInsert = new List<BigQueryInsertRow>();
-            foreach (var xmlEntry in xmlData)
-            {
-                var filePath = xmlEntry["file_path"];
-                var modificationTime = File.GetLastWriteTime(filePath.ToString());
-                rowsToInsert.Add(new BigQueryInsertRow
-                {
-                    { "_file", filePath },
-                    { "_modified", modificationTime },
-                    { "_data", JsonConvert.SerializeObject(xmlEntry["content"]) }
-                });
-            }
-            Console.WriteLine($"Prepared {rowsToInsert.Count} rows for insertion into BigQuery.");
-
             // Check if the table exists
-            var tableReference = _client.GetTableReference(datasetId, tableId);
+            TableReference tableReference = _client.GetTableReference(datasetId, tableId);
             try
             {
                 _client.GetTable(tableReference);
@@ -50,74 +34,85 @@ namespace BigQueryUpload
                 Console.WriteLine($"Table {tableId} does not exist. Creating table...");
                 var schema = new TableSchemaBuilder
                 {
-                    { "_file", BigQueryDbType.String },
-                    { "_modified", BigQueryDbType.Timestamp },
-                    { "_data", BigQueryDbType.String }
+                    { "id", BigQueryDbType.Int64 },
+                    { "parent_id", BigQueryDbType.Int64 },
+                    { "tag", BigQueryDbType.String },
+                    { "attributes", BigQueryDbType.String },
+                    { "text", BigQueryDbType.String },
+                    { "file_name", BigQueryDbType.String },
+                    { "modification_time", BigQueryDbType.Timestamp }
                 }.Build();
                 _client.CreateTable(tableReference, schema);
                 Console.WriteLine($"Table {tableId} created successfully.");
             }
 
-            // Upload the data to BigQuery
-            Console.WriteLine($"Uploading data to BigQuery table: {tableId}");
-            var insertErrors = _client.InsertRows(tableReference, rowsToInsert);
-            if (insertErrors != null)
+            // Read and process the XML file
+            Console.WriteLine($"Reading XML file: {xmlFilePath}");
+            int idCounter = 1; // Counter to generate unique IDs for nodes
+            var modificationTime = File.GetLastWriteTime(xmlFilePath); // Get file modification time
+            var xmlDocument = new System.Xml.XmlDocument();
+            xmlDocument.Load(xmlFilePath);
+
+            var root = xmlDocument.DocumentElement;
+            if (root != null)
             {
-                Console.WriteLine($"Errors while inserting rows into BigQuery: {insertErrors}");
-                throw new Exception($"Errors while inserting rows into BigQuery: {insertErrors}");
+                var rowsBatch = new List<BigQueryInsertRow>();
+                ParseElement(root, null, ref idCounter, rowsBatch, xmlFilePath, modificationTime, tableReference);
+                
+                // Upload any remaining rows in the batch
+                if (rowsBatch.Count > 0)
+                {
+                    Console.WriteLine($"Uploading final batch of {rowsBatch.Count} rows to BigQuery.");
+                    var insertRows = _client.InsertRows(tableReference, rowsBatch);
+                    if (insertRows != null)
+                    {
+                        Console.WriteLine($"Errors while inserting rows into BigQuery: {insertRows}");
+                        throw new Exception($"Errors while inserting rows into BigQuery: {insertRows}");
+                    }
+                }
             }
 
             Console.WriteLine($"The data from the XML file in {xmlFilePath} has been successfully uploaded to the table {tableId}.");
         }
 
-        private List<Dictionary<string, object>> ReadXmlRecursively(string xmlFilePath)
+        private void ParseElement(System.Xml.XmlElement element, int? parentId, ref int idCounter, List<BigQueryInsertRow> rowsBatch, string filePath, DateTime modificationTime, TableReference tableReference)
         {
-            Console.WriteLine($"Reading XML file: {xmlFilePath}");
-            var xmlData = new List<Dictionary<string, object>>();
+            int currentId = idCounter++; // Assign a unique ID to the current node
 
-            try
+            // Add the current node as a row
+            var row = new BigQueryInsertRow
             {
-                var xmlDocument = new System.Xml.XmlDocument();
-                xmlDocument.Load(xmlFilePath);
+                { "id", currentId },
+                { "parent_id", parentId },
+                { "tag", element.Name },
+                { "attributes", JsonConvert.SerializeObject(element.Attributes) }, // Serialize attributes as JSON string
+                { "text", element.InnerText.Trim() },
+                { "file_name", Path.GetFileName(filePath) },
+                { "modification_time", modificationTime.ToUniversalTime() }
+            };
+            rowsBatch.Add(row);
 
-                var root = xmlDocument.DocumentElement;
-                if (root != null)
+            // If the batch size reaches 1000, upload it to BigQuery
+            if (rowsBatch.Count >= 1000)
+            {
+                Console.WriteLine($"Uploading batch of {rowsBatch.Count} rows to BigQuery.");
+                var insertRows = _client.InsertRows(tableReference, rowsBatch);
+                if (insertRows.Errors is not null && insertRows.Errors.Count() > 0)
                 {
-                    xmlData.Add(new Dictionary<string, object>
-                    {
-                        { "file_path", xmlFilePath },
-                        { "root_tag", root.Name },
-                        { "attributes", root.Attributes },
-                        { "content", ParseElement(root) }
-                    });
+                    Console.WriteLine($"Errors while inserting rows into BigQuery: {insertRows}");
+                    throw new Exception($"Errors while inserting rows into BigQuery: {insertRows}");
+                }
+                rowsBatch.Clear(); // Clear the batch after uploading
+            }
+
+            // Process child nodes
+            foreach (System.Xml.XmlNode childNode in element.ChildNodes)
+            {
+                if (childNode is System.Xml.XmlElement child)
+                {
+                    ParseElement(child, currentId, ref idCounter, rowsBatch, filePath, modificationTime, tableReference);
                 }
             }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error reading XML file {xmlFilePath}: {ex.Message}");
-                throw;
-            }
-
-            Console.WriteLine($"Finished reading XML file: {xmlFilePath}");
-            return xmlData;
-        }
-
-        private Dictionary<string, object> ParseElement(System.Xml.XmlElement element)
-        {
-            var parsedData = new Dictionary<string, object>
-            {
-                { "tag", element.Name },
-                { "attributes", element.Attributes },
-                { "text", element.InnerText.Trim() },
-                { "children", new List<Dictionary<string, object>>() }
-            };
-
-            foreach (System.Xml.XmlElement child in element.ChildNodes)
-            {
-                ((List<Dictionary<string, object>>)parsedData["children"]).Add(ParseElement(child));
-            }
-
-            return parsedData;
         }
     }
 }
