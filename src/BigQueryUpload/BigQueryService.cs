@@ -98,7 +98,7 @@ namespace BigQueryUpload
             {
                 { "id", currentId },
                 { "parent_id", parentId },
-                { "tag", element.Name },
+                { "tag", element.Name.StartsWith("xsd:") ? element.Name.Substring(4) : element.Name },
                 { "attributes", JsonConvert.SerializeObject(attributesDict) }, // Serialize attributes dictionary as JSON string
                 { "text", element.InnerText.Trim() },
                 { "file_name", fileName },
