@@ -24,9 +24,13 @@ namespace BigQueryUpload
             // Obtener todos los archivos de manera asíncrona
             files = (await GetFilesWithExtensionAsync(directory, ".xsd")).ToList();
             Console.WriteLine($"Total files found: {files.Count}");
+
+            // Verificar y crear la tabla si es necesario
+            var tableReference = await _bigQueryService.EnsureTableExistsAsync(datasetId, tableId);
+
             foreach (string file in files)
             {
-                await _bigQueryService.UploadXmlToBigQueryAsync(file, datasetId, tableId); // Use the async method
+                await _bigQueryService.UploadXmlToBigQueryAsync(file, tableReference); // Pasar datasetId y tableId directamente
             }
         }
 

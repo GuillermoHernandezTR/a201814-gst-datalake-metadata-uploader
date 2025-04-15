@@ -18,12 +18,10 @@ namespace BigQueryUpload
             _client = BigQueryClient.Create(projectId);
         }
 
-        public async Task UploadXmlToBigQueryAsync(string xmlFilePath, string datasetId, string tableId)
+        public async Task<TableReference> EnsureTableExistsAsync(string datasetId, string tableId)
         {
-            Console.WriteLine($"Starting upload process for XML file: {xmlFilePath} to BigQuery table: {tableId}");
-
-            // Check if the table exists
             TableReference tableReference = _client.GetTableReference(datasetId, tableId);
+
             try
             {
                 await _client.GetTableAsync(tableReference);
@@ -31,7 +29,7 @@ namespace BigQueryUpload
             }
             catch (Google.GoogleApiException)
             {
-                // If the table does not exist, create it
+                // Si la tabla no existe, crearla
                 Console.WriteLine($"Table {tableId} does not exist. Creating table...");
                 var schema = new TableSchemaBuilder
                 {
@@ -47,8 +45,16 @@ namespace BigQueryUpload
                 Console.WriteLine($"Table {tableId} created successfully.");
             }
 
+            return tableReference;
+        }
+
+        public async Task UploadXmlToBigQueryAsync(string xmlFilePath, TableReference tableReference)
+        {
+            string fileName = Path.GetFileName(xmlFilePath);
+            Console.WriteLine($"Starting upload process for XML file: {fileName} to BigQuery table: {tableReference.TableId}");
+
             // Read and process the XML file
-            Console.WriteLine($"Reading XML file: {xmlFilePath}");
+            Console.WriteLine($"Reading XML file: {fileName}");
             var idCounter = new Counter { Value = 1 }; // Use the Counter class to track the ID
             var modificationTime = File.GetLastWriteTime(xmlFilePath); // Get file modification time
             var xmlDocument = new System.Xml.XmlDocument();
@@ -58,7 +64,7 @@ namespace BigQueryUpload
             if (root != null)
             {
                 var rowsBatch = new List<BigQueryInsertRow>();
-                await ParseElementAsync(root, null, idCounter, rowsBatch, xmlFilePath, modificationTime, tableReference);
+                await ParseElementAsync(root, null, idCounter, rowsBatch, fileName, modificationTime, tableReference);
 
                 // Upload any remaining rows in the batch
                 if (rowsBatch.Count > 0)
@@ -73,10 +79,10 @@ namespace BigQueryUpload
                 }
             }
 
-            Console.WriteLine($"The data from the XML file in {xmlFilePath} has been successfully uploaded to the table {tableId}.");
+            Console.WriteLine($"The data from the XML file in {fileName} has been successfully uploaded to the table {tableReference.TableId}.");
         }
 
-        private async Task ParseElementAsync(System.Xml.XmlElement element, int? parentId, Counter idCounter, List<BigQueryInsertRow> rowsBatch, string filePath, DateTime modificationTime, TableReference tableReference)
+        private async Task ParseElementAsync(System.Xml.XmlElement element, int? parentId, Counter idCounter, List<BigQueryInsertRow> rowsBatch, string fileName, DateTime modificationTime, TableReference tableReference)
         {
             int currentId = idCounter.Value++; // Assign a unique ID to the current node
 
@@ -95,7 +101,7 @@ namespace BigQueryUpload
                 { "tag", element.Name },
                 { "attributes", JsonConvert.SerializeObject(attributesDict) }, // Serialize attributes dictionary as JSON string
                 { "text", element.InnerText.Trim() },
-                { "file_name", filePath },
+                { "file_name", fileName },
                 { "modification_time", modificationTime.ToUniversalTime() }
             };
             rowsBatch.Add(row);
@@ -118,7 +124,7 @@ namespace BigQueryUpload
             {
                 if (childNode is System.Xml.XmlElement child)
                 {
-                    await ParseElementAsync(child, currentId, idCounter, rowsBatch, filePath, modificationTime, tableReference);
+                    await ParseElementAsync(child, currentId, idCounter, rowsBatch, fileName, modificationTime, tableReference);
                 }
             }
         }
