@@ -51,16 +51,14 @@ namespace BigQueryUpload
         public async Task UploadXmlToBigQueryAsync(string xmlFilePath, TableReference tableReference)
         {
             string fileName = Path.GetFileName(xmlFilePath);
-            Console.WriteLine($"Starting upload process for XML file: {fileName} to BigQuery table: {tableReference.TableId}");
-
-            // Read and process the XML file
-            Console.WriteLine($"Reading XML file: {fileName}");
             var idCounter = new Counter { Value = 1 }; // Use the Counter class to track the ID
             var modificationTime = File.GetLastWriteTime(xmlFilePath); // Get file modification time
             var xmlDocument = new System.Xml.XmlDocument();
             xmlDocument.Load(xmlFilePath);
 
             var root = xmlDocument.DocumentElement;
+            int totalRows = 0;
+
             if (root != null)
             {
                 var rowsBatch = new List<BigQueryInsertRow>();
@@ -69,17 +67,12 @@ namespace BigQueryUpload
                 // Upload any remaining rows in the batch
                 if (rowsBatch.Count > 0)
                 {
-                    Console.WriteLine($"Uploading final batch of {rowsBatch.Count} rows to BigQuery.");
-                    var insertRows = await _client.InsertRowsAsync(tableReference, rowsBatch);
-                    if (insertRows.Errors != null && insertRows.Errors.Count() > 0)
-                    {
-                        Console.WriteLine($"Errors while inserting rows into BigQuery: {insertRows}");
-                        throw new Exception($"Errors while inserting rows into BigQuery: {insertRows}");
-                    }
+                    await _client.InsertRowsAsync(tableReference, rowsBatch);
+                    totalRows += rowsBatch.Count;
                 }
             }
 
-            Console.WriteLine($"The data from the XML file in {fileName} has been successfully uploaded to the table {tableReference.TableId}.");
+            Console.WriteLine($"Upload completed. File: {fileName}, Rows added: {totalRows}.");
         }
 
         private async Task ParseElementAsync(System.Xml.XmlElement element, int? parentId, Counter idCounter, List<BigQueryInsertRow> rowsBatch, string fileName, DateTime modificationTime, TableReference tableReference)
