@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 
 namespace BigQueryUpload
 {
@@ -14,32 +15,68 @@ namespace BigQueryUpload
             _bigQueryService = bigQueryService;
         }
 
-        public void UploadXml(string directoryPath, string datasetId, string tableId)
+        public async Task UploadXmlAsync(string year, string taxreturntype, string datasetId, string tableId)
         {
             List<string> files = new List<string>();
-            string[] directories = new string[]
-            {
-                @"//cisprod-0301.int.thomsonreuters.com/taxapptech$/TaxApps/2024/1040ta4/EFile",
-                @"//cisprod-0301.int.thomsonreuters.com/taxapptech$/TaxApps/2024/1041ta4/EFile",
-                @"//cisprod-0301.int.thomsonreuters.com/taxapptech$/TaxApps/2024/1065ta4/EFile",
-                @"//cisprod-0301.int.thomsonreuters.com/taxapptech$/TaxApps/2024/1120ta4/EFile",
-                @"//cisprod-0301.int.thomsonreuters.com/taxapptech$/TaxApps/2024/5500ta4/EFile",
-                @"//cisprod-0301.int.thomsonreuters.com/taxapptech$/TaxApps/2024/7060ta4/EFile",
-                @"//cisprod-0301.int.thomsonreuters.com/taxapptech$/TaxApps/2024/7090ta4/EFile",
-                @"//cisprod-0301.int.thomsonreuters.com/taxapptech$/TaxApps/2024/F990ta4/EFile"
-            };
+            string baseDirectory = @"//cisprod-0301.int.thomsonreuters.com/taxapptech$/TaxApps";
+            string directory = $@"{baseDirectory}/{year}/{taxreturntype}ta{year.Last()}/EFile";
 
-            foreach (string dir in directories)
-            {
-                if (Directory.Exists(dir))
-                {
-                    files.AddRange(Directory.GetFiles(dir, "*.xsd"));
-                }
-            }
+            // Obtener todos los archivos de manera asíncrona
+            files = (await GetFilesWithExtensionAsync(directory, ".xsd")).ToList();
+            Console.WriteLine($"Total files found: {files.Count}");
             foreach (string file in files)
             {
-                _bigQueryService.UploadXmlToBigQuery(file, datasetId, tableId);
+                await _bigQueryService.UploadXmlToBigQueryAsync(file, datasetId, tableId); // Use the async method
             }
         }
+
+        static async Task<IEnumerable<string>> GetFilesWithExtensionAsync(string directoryPath, string fileExtension)
+        {
+            var files = new List<string>();
+
+            try
+            {
+                // Obtenemos los subdirectorios de manera asincrónica
+                var subdirectories = Directory.EnumerateDirectories(directoryPath);
+
+                var tasks = new List<Task<IEnumerable<string>>>();
+
+                // Crea una tarea para cada subdirectorio
+                foreach (var subdirectory in subdirectories)
+                {
+                    tasks.Add(Task.Run(() => GetFilesWithExtensionAsync(subdirectory, fileExtension)));
+                }
+
+                // Espera a que todas las tareas se completen
+                var results = await Task.WhenAll(tasks);
+
+                // Agrega los archivos de cada subdirectorio al resultado
+                foreach (var result in results)
+                {
+                    files.AddRange(result);
+                }
+
+                // Agrega los archivos del directorio actual
+                foreach (var file in Directory.EnumerateFiles(directoryPath, "*" + fileExtension))
+                {
+                    files.Add(file);
+                }
+            }
+            catch (UnauthorizedAccessException e)
+            {
+                Console.WriteLine($"Acceso denegado a {directoryPath}: {e.Message}");
+            }
+            catch (DirectoryNotFoundException e)
+            {
+                Console.WriteLine($"Directorio no encontrado: {e.Message}");
+            }
+            catch (IOException e)
+            {
+                Console.WriteLine($"Error de E/S: {e.Message}");
+            }
+
+            return files;
+        }
+
     }
 }

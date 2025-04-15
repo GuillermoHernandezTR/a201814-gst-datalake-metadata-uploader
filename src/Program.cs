@@ -1,12 +1,13 @@
 using System;
 using System.IO;
+using System.Threading.Tasks;
 using Microsoft.Extensions.Configuration;
 
 namespace BigQueryUpload
 {
     class Program
     {
-        static void Main(string[] args)
+        static async Task Main(string[] args)
         {
             var configuration = new ConfigurationBuilder()
                 .SetBasePath(AppContext.BaseDirectory) // Use AppContext.BaseDirectory for better compatibility
@@ -15,7 +16,12 @@ namespace BigQueryUpload
 
             var bigQueryService = new BigQueryService(configuration["GoogleCloud:ProjectId"]);
             var xmlUploader = new XmlUploader(bigQueryService);
-            xmlUploader.UploadXml(configuration["BigQuery:FilePath"], configuration["BigQuery:DatasetId"], configuration["BigQuery:TableId"]);
+            await xmlUploader.UploadXmlAsync(
+                configuration["BigQuery:Year"],
+                configuration["BigQuery:TaxReturnType"],
+                configuration["BigQuery:DatasetId"],
+                configuration["BigQuery:TableId"]
+            );
         }
     }
 }

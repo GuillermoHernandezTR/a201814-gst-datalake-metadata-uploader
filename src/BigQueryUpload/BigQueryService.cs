@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 
 namespace BigQueryUpload
 {
@@ -17,7 +18,7 @@ namespace BigQueryUpload
             _client = BigQueryClient.Create(projectId);
         }
 
-        public void UploadXmlToBigQuery(string xmlFilePath, string datasetId, string tableId)
+        public async Task UploadXmlToBigQueryAsync(string xmlFilePath, string datasetId, string tableId)
         {
             Console.WriteLine($"Starting upload process for XML file: {xmlFilePath} to BigQuery table: {tableId}");
 
@@ -25,7 +26,7 @@ namespace BigQueryUpload
             TableReference tableReference = _client.GetTableReference(datasetId, tableId);
             try
             {
-                _client.GetTable(tableReference);
+                await _client.GetTableAsync(tableReference);
                 Console.WriteLine($"Table {tableId} exists.");
             }
             catch (Google.GoogleApiException)
@@ -42,13 +43,13 @@ namespace BigQueryUpload
                     { "file_name", BigQueryDbType.String },
                     { "modification_time", BigQueryDbType.Timestamp }
                 }.Build();
-                _client.CreateTable(tableReference, schema);
+                await _client.CreateTableAsync(tableReference, schema);
                 Console.WriteLine($"Table {tableId} created successfully.");
             }
 
             // Read and process the XML file
             Console.WriteLine($"Reading XML file: {xmlFilePath}");
-            int idCounter = 1; // Counter to generate unique IDs for nodes
+            var idCounter = new Counter { Value = 1 }; // Use the Counter class to track the ID
             var modificationTime = File.GetLastWriteTime(xmlFilePath); // Get file modification time
             var xmlDocument = new System.Xml.XmlDocument();
             xmlDocument.Load(xmlFilePath);
@@ -57,13 +58,13 @@ namespace BigQueryUpload
             if (root != null)
             {
                 var rowsBatch = new List<BigQueryInsertRow>();
-                ParseElement(root, null, ref idCounter, rowsBatch, xmlFilePath, modificationTime, tableReference);
-                
+                await ParseElementAsync(root, null, idCounter, rowsBatch, xmlFilePath, modificationTime, tableReference);
+
                 // Upload any remaining rows in the batch
                 if (rowsBatch.Count > 0)
                 {
                     Console.WriteLine($"Uploading final batch of {rowsBatch.Count} rows to BigQuery.");
-                    var insertRows = _client.InsertRows(tableReference, rowsBatch);
+                    var insertRows = await _client.InsertRowsAsync(tableReference, rowsBatch);
                     if (insertRows.Errors != null && insertRows.Errors.Count() > 0)
                     {
                         Console.WriteLine($"Errors while inserting rows into BigQuery: {insertRows}");
@@ -75,9 +76,9 @@ namespace BigQueryUpload
             Console.WriteLine($"The data from the XML file in {xmlFilePath} has been successfully uploaded to the table {tableId}.");
         }
 
-        private void ParseElement(System.Xml.XmlElement element, int? parentId, ref int idCounter, List<BigQueryInsertRow> rowsBatch, string filePath, DateTime modificationTime, TableReference tableReference)
+        private async Task ParseElementAsync(System.Xml.XmlElement element, int? parentId, Counter idCounter, List<BigQueryInsertRow> rowsBatch, string filePath, DateTime modificationTime, TableReference tableReference)
         {
-            int currentId = idCounter++; // Assign a unique ID to the current node
+            int currentId = idCounter.Value++; // Assign a unique ID to the current node
 
             // Convert attributes to a dictionary
             var attributesDict = new Dictionary<string, string>();
@@ -100,11 +101,11 @@ namespace BigQueryUpload
             rowsBatch.Add(row);
 
             // If the batch size reaches 1000, upload it to BigQuery
-            if (rowsBatch.Count >= 10000)
+            if (rowsBatch.Count >= 1000)
             {
                 Console.WriteLine($"Uploading batch of {rowsBatch.Count} rows to BigQuery.");
-                var insertRows = _client.InsertRows(tableReference, rowsBatch);
-                if (insertRows.Errors is not null && insertRows.Errors.Count() > 0)
+                var insertRows = await _client.InsertRowsAsync(tableReference, rowsBatch);
+                if (insertRows.Errors != null && insertRows.Errors.Count() > 0)
                 {
                     Console.WriteLine($"Errors while inserting rows into BigQuery: {insertRows}");
                     throw new Exception($"Errors while inserting rows into BigQuery: {insertRows}");
@@ -117,9 +118,14 @@ namespace BigQueryUpload
             {
                 if (childNode is System.Xml.XmlElement child)
                 {
-                    ParseElement(child, currentId, ref idCounter, rowsBatch, filePath, modificationTime, tableReference);
+                    await ParseElementAsync(child, currentId, idCounter, rowsBatch, filePath, modificationTime, tableReference);
                 }
             }
         }
+    }
+
+    public class Counter
+    {
+        public int Value { get; set; }
     }
 }
