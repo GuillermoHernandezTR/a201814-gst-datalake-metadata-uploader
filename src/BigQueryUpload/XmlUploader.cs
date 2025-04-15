@@ -15,8 +15,10 @@ namespace BigQueryUpload
             _bigQueryService = bigQueryService;
         }
 
-        public async Task UploadXmlAsync(string year, string taxreturntype, string datasetId, string tableId)
+        public async Task UploadEfileJurisdictionSchemaAsync(string year, string taxreturntype)
         {
+            string datasetId = "mdr";
+            string tableId = "efile_xsd";
             List<string> files = new List<string>();
             string baseDirectory = @"//cisprod-0301.int.thomsonreuters.com/taxapptech$/TaxApps";
             string directory = $@"{baseDirectory}/{year}/{taxreturntype}ta{year.Last()}/EFile";
@@ -28,10 +30,10 @@ namespace BigQueryUpload
             // Verificar y crear la tabla si es necesario
             var tableReference = await _bigQueryService.EnsureTableExistsAsync(datasetId, tableId);
 
-            foreach (string file in files)
+            await Parallel.ForEachAsync(files, async (file, _) =>
             {
                 await _bigQueryService.UploadXmlToBigQueryAsync(file, tableReference); // Pasar datasetId y tableId directamente
-            }
+            });
         }
 
         static async Task<IEnumerable<string>> GetFilesWithExtensionAsync(string directoryPath, string fileExtension)

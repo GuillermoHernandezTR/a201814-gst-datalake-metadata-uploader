@@ -16,11 +16,9 @@ namespace BigQueryUpload
 
             var bigQueryService = new BigQueryService(configuration["GoogleCloud:ProjectId"]);
             var xmlUploader = new XmlUploader(bigQueryService);
-            await xmlUploader.UploadXmlAsync(
+            await xmlUploader.UploadEfileJurisdictionSchemaAsync(
                 configuration["BigQuery:Year"],
-                configuration["BigQuery:TaxReturnType"],
-                configuration["BigQuery:DatasetId"],
-                configuration["BigQuery:TableId"]
+                configuration["BigQuery:TaxReturnType"]
             );
         }
     }
