@@ -18,7 +18,7 @@ namespace BigQueryUpload
             _client = BigQueryClient.Create(projectId);
         }
 
-        public async Task<TableReference> EnsureTableExistsAsync(string datasetId, string tableId)
+        public async Task<TableReference> GetTableAsync(string datasetId, string tableId)
         {
             TableReference tableReference = _client.GetTableReference(datasetId, tableId);
 
@@ -46,6 +46,36 @@ namespace BigQueryUpload
             }
 
             return tableReference;
+        }
+
+        public async Task<DateTime?> GetMaxModifiedTimeAsync(TableReference tableReference)
+        {
+            try
+            {
+                // Construir la consulta SQL para obtener la fecha máxima
+                string query = $@"
+                    SELECT MAX(modification_time) AS max_modified_time
+                    FROM `{tableReference.ProjectId}.{tableReference.DatasetId}.{tableReference.TableId}`";
+
+                // Ejecutar la consulta
+                var queryResults = await _client.ExecuteQueryAsync(query, parameters: null);
+
+                // Extraer el valor de la fecha máxima
+                foreach (var row in queryResults)
+                {
+                    if (row["max_modified_time"] != null)
+                    {
+                        return (DateTime)row["max_modified_time"];
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error retrieving max modified time: {ex.Message}");
+            }
+
+            // Retornar null si no se encuentra un valor o ocurre un error
+            return null;
         }
 
         public async Task UploadXmlToBigQueryAsync(string xmlFilePath, TableReference tableReference)
@@ -99,8 +129,8 @@ namespace BigQueryUpload
             };
             rowsBatch.Add(row);
 
-            // If the batch size reaches 1000, upload it to BigQuery
-            if (rowsBatch.Count >= 1000)
+            // If the batch size reaches 5000, upload it to BigQuery
+            if (rowsBatch.Count >= 5000)
             {
                 Console.WriteLine($"Uploading batch of {rowsBatch.Count} rows to BigQuery.");
                 var insertRows = await _client.InsertRowsAsync(tableReference, rowsBatch);

@@ -22,9 +22,8 @@ namespace BigQueryUpload
             string tableId = "efile_xsd";
             
             // Verificar y crear la tabla si es necesario
-            TableReference tableReference = await _bigQueryService.EnsureTableExistsAsync(datasetId, tableId);
+            TableReference tableReference = await _bigQueryService.GetTableAsync(datasetId, tableId);
             
-            DateTime lastModifiedTime = await XmlUploader.GetMaxModifiedTimeAsync(tableReference);
             List<string> files = new List<string>();
             string baseDirectory = @"//cisprod-0301.int.thomsonreuters.com/taxapptech$/TaxApps";
             string directory = $@"{baseDirectory}/{year}/{taxreturntype}ta{year.Last()}/EFile";
@@ -34,7 +33,7 @@ namespace BigQueryUpload
             var startTime = DateTime.Now;
 
             // Retrieve all files asynchronously
-            files = (await GetFilesWithExtensionAsync(directory, ".xsd")).ToList();
+            files = (await FetchModifiedFilesAsync(directory, ".xsd", tableReference)).ToList();
 
             // Log the end of file retrieval
             var endTime = DateTime.Now;
@@ -58,22 +57,24 @@ namespace BigQueryUpload
 
         }
 
-        static async Task<IEnumerable<string>> GetFilesWithExtensionAsync(string directoryPath, string fileExtension)
+        public async Task<IEnumerable<string>> FetchModifiedFilesAsync(string directoryPath, string fileExtension, TableReference tableReference)
         {
             var files = new List<string>();
             var startTime = DateTime.Now;
+            DateTime? maxModifiedTime = await _bigQueryService.GetMaxModifiedTimeAsync(tableReference);
 
             try
             {
                 // Retrieve subdirectories asynchronously
-                var subdirectories = Directory.EnumerateDirectories(directoryPath);
+                var subdirectories = Directory.EnumerateDirectories(directoryPath)
+                                             .Where(subdir => Directory.GetLastWriteTimeUtc(subdir) > (maxModifiedTime ?? DateTime.MinValue));
 
                 var tasks = new List<Task<IEnumerable<string>>>();
 
                 // Create a task for each subdirectory
                 foreach (var subdirectory in subdirectories)
                 {
-                    tasks.Add(Task.Run(() => GetFilesWithExtensionAsync(subdirectory, fileExtension)));
+                    tasks.Add(Task.Run(() => FetchModifiedFilesAsync(subdirectory, fileExtension, tableReference)));
                 }
 
                 // Wait for all tasks to complete
@@ -83,12 +84,6 @@ namespace BigQueryUpload
                 foreach (var result in results)
                 {
                     files.AddRange(result);
-                }
-
-                // Add files from the current directory
-                foreach (var file in Directory.EnumerateFiles(directoryPath, "*" + fileExtension))
-                {
-                    files.Add(file);
                 }
             }
             catch (UnauthorizedAccessException e)
