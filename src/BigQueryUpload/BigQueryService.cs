@@ -31,16 +31,22 @@ namespace BigQueryUpload
             {
                 // Si la tabla no existe, crearla
                 Console.WriteLine($"Table {tableId} does not exist. Creating table...");
+
+                // Definir el esquema de la tabla
                 var schema = new TableSchemaBuilder
                 {
-                    { "id", BigQueryDbType.Int64 },
+                    { "year", BigQueryDbType.String },
+                    { "taxreturntype", BigQueryDbType.String },
+                    { "_file", BigQueryDbType.String },
+                    { "_modified", BigQueryDbType.Timestamp },
+                    { "_inserted_at", BigQueryDbType.Timestamp },
+                    { "node_id", BigQueryDbType.Int64 },
                     { "parent_id", BigQueryDbType.Int64 },
                     { "tag", BigQueryDbType.String },
                     { "attributes", BigQueryDbType.String },
-                    { "text", BigQueryDbType.String },
-                    { "file_name", BigQueryDbType.String },
-                    { "modification_time", BigQueryDbType.Timestamp }
+                    { "text", BigQueryDbType.String }
                 }.Build();
+
                 await _client.CreateTableAsync(tableReference, schema);
                 Console.WriteLine($"Table {tableId} created successfully.");
             }
@@ -54,7 +60,7 @@ namespace BigQueryUpload
             {
                 // Construir la consulta SQL para obtener la fecha máxima
                 string query = $@"
-                    SELECT MAX(modification_time) AS max_modified_time
+                    SELECT MAX(_modified) AS max_modified_time
                     FROM `{tableReference.ProjectId}.{tableReference.DatasetId}.{tableReference.TableId}`";
 
                 // Ejecutar la consulta
@@ -80,7 +86,7 @@ namespace BigQueryUpload
 
         public async Task UploadXmlToBigQueryAsync(string xmlFilePath, TableReference tableReference)
         {
-            string fileName = Path.GetFileName(xmlFilePath);
+            string fileName = xmlFilePath.Substring(xmlFilePath.IndexOf(@"Efile\") + 6);
             var idCounter = new Counter { Value = 1 }; // Use the Counter class to track the ID
             var modificationTime = File.GetLastWriteTime(xmlFilePath); // Get file modification time
             var xmlDocument = new System.Xml.XmlDocument();
@@ -108,29 +114,32 @@ namespace BigQueryUpload
         private async Task ParseElementAsync(System.Xml.XmlElement element, int? parentId, Counter idCounter, List<BigQueryInsertRow> rowsBatch, string fileName, DateTime modificationTime, TableReference tableReference)
         {
             int currentId = idCounter.Value++; // Assign a unique ID to the current node
-
+            
             // Convert attributes to a dictionary
             var attributesDict = new Dictionary<string, string>();
             foreach (System.Xml.XmlAttribute attribute in element.Attributes)
             {
                 attributesDict[attribute.Name] = attribute.Value;
             }
-
+            
             // Add the current node as a row
             var row = new BigQueryInsertRow
             {
-                { "id", currentId },
+                { "year", Program.Year },
+                { "taxreturntype", Program.TaxReturnType },
+                { "_file", fileName },
+                { "_modified", modificationTime.ToUniversalTime() },
+                { "_inserted_at", DateTime.UtcNow },
+                { "node_id", currentId },
                 { "parent_id", parentId },
                 { "tag", element.Name.StartsWith("xsd:") ? element.Name.Substring(4) : element.Name },
-                { "attributes", JsonConvert.SerializeObject(attributesDict) }, // Serialize attributes dictionary as JSON string
-                { "text", element.InnerText.Trim() },
-                { "file_name", fileName },
-                { "modification_time", modificationTime.ToUniversalTime() }
+                { "attributes", JsonConvert.SerializeObject(attributesDict) },
+                { "text", element.InnerText.Trim() }
             };
             rowsBatch.Add(row);
 
-            // If the batch size reaches 5000, upload it to BigQuery
-            if (rowsBatch.Count >= 5000)
+            // If the batch size reaches 1000, upload it to BigQuery
+            if (rowsBatch.Count >= 1000)
             {
                 Console.WriteLine($"Uploading batch of {rowsBatch.Count} rows to BigQuery.");
                 var insertRows = await _client.InsertRowsAsync(tableReference, rowsBatch);
@@ -149,6 +158,39 @@ namespace BigQueryUpload
                 {
                     await ParseElementAsync(child, currentId, idCounter, rowsBatch, fileName, modificationTime, tableReference);
                 }
+            }
+        }
+
+        public async Task DeleteFilesFromDestinationTableAsync(List<string> files, TableReference tableReference)
+        {
+            try
+            {
+                // Construir la lista de nombres de archivos como una cadena separada por comas
+                var fileList = files.Select(file => file.Contains("Efile/") ? file.Substring(file.IndexOf("Efile/") + "Efile/".Length) : file).ToList();
+                var parameters = new List<BigQueryParameter>
+                {
+                    new BigQueryParameter
+                    {
+                        Name = "fileList",
+                        Value = fileList,
+                        Type = BigQueryDbType.Array
+                    }
+                };
+
+                // Construir la consulta SQL para eliminar los registros
+                string query = $@"
+                    DELETE FROM `{tableReference.ProjectId}.{tableReference.DatasetId}.{tableReference.TableId}`
+                    WHERE _file IN UNNEST(@fileList)";
+
+                // Ejecutar la consulta
+                Console.WriteLine("Deleting files from destination table...");
+                await _client.ExecuteQueryAsync(query, parameters);
+                Console.WriteLine("Files deleted successfully from destination table.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error deleting files from destination table: {ex.Message}");
+                throw;
             }
         }
     }

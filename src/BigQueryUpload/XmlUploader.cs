@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Collections.Concurrent;
 using System.Threading.Tasks;
 using Google.Apis.Bigquery.v2.Data;
 
@@ -20,25 +21,28 @@ namespace BigQueryUpload
         {
             string datasetId = "mdr";
             string tableId = "efile_xsd";
-            
+
             // Verificar y crear la tabla si es necesario
             TableReference tableReference = await _bigQueryService.GetTableAsync(datasetId, tableId);
-            
+
             List<string> files = new List<string>();
             string baseDirectory = @"//cisprod-0301.int.thomsonreuters.com/taxapptech$/TaxApps";
-            string directory = $@"{baseDirectory}/{year}/{taxreturntype}ta{year.Last()}/EFile";
+            Directory.SetCurrentDirectory(baseDirectory);
+            string directory = $@"{year}/{taxreturntype}ta{year.Last()}/EFile";
 
             // Log the start of file retrieval
             Console.WriteLine("Starting to retrieve files...");
             var startTime = DateTime.Now;
 
             // Retrieve all files asynchronously
-            files = (await FetchModifiedFilesAsync(directory, ".xsd", tableReference)).ToList();
+            files = (await GetFilesWithExtensionAsync(directory, ".xsd")).ToList();
 
             // Log the end of file retrieval
             var endTime = DateTime.Now;
             Console.WriteLine($"File retrieval completed. Time elapsed: {(endTime - startTime).TotalSeconds} seconds. Total files: {files.Count}");
 
+            // Delete retrieved files in destination table
+            await _bigQueryService.DeleteFilesFromDestinationTableAsync(files, tableReference);
 
             int totalFiles = files.Count;
 
@@ -57,47 +61,51 @@ namespace BigQueryUpload
 
         }
 
-        public async Task<IEnumerable<string>> FetchModifiedFilesAsync(string directoryPath, string fileExtension, TableReference tableReference)
+        static async Task<IEnumerable<string>> GetFilesWithExtensionAsync(string directoryPath, string fileExtension)
         {
             var files = new List<string>();
-            var startTime = DateTime.Now;
-            DateTime? maxModifiedTime = await _bigQueryService.GetMaxModifiedTimeAsync(tableReference);
 
             try
             {
-                // Retrieve subdirectories asynchronously
-                var subdirectories = Directory.EnumerateDirectories(directoryPath)
-                                             .Where(subdir => Directory.GetLastWriteTimeUtc(subdir) > (maxModifiedTime ?? DateTime.MinValue));
+                // Obtenemos los subdirectorios de manera asincrónica
+                var subdirectories = Directory.EnumerateDirectories(directoryPath);
 
                 var tasks = new List<Task<IEnumerable<string>>>();
 
-                // Create a task for each subdirectory
+                // Crea una tarea para cada subdirectorio
                 foreach (var subdirectory in subdirectories)
                 {
-                    tasks.Add(Task.Run(() => FetchModifiedFilesAsync(subdirectory, fileExtension, tableReference)));
+                    tasks.Add(Task.Run(() => GetFilesWithExtensionAsync(subdirectory, fileExtension)));
                 }
 
-                // Wait for all tasks to complete
+                // Espera a que todas las tareas se completen
                 var results = await Task.WhenAll(tasks);
 
-                // Add files from each subdirectory to the result
+                // Agrega los archivos de cada subdirectorio al resultado
                 foreach (var result in results)
                 {
                     files.AddRange(result);
                 }
+
+                // Agrega los archivos del directorio actual
+                foreach (var file in Directory.EnumerateFiles(directoryPath, "*" + fileExtension))
+                {
+                    files.Add(file);
+                }
             }
             catch (UnauthorizedAccessException e)
             {
-                Console.WriteLine($"Access denied to {directoryPath}: {e.Message}");
+                Console.WriteLine($"Acceso denegado a {directoryPath}: {e.Message}");
             }
             catch (DirectoryNotFoundException e)
             {
-                Console.WriteLine($"Directory not found: {e.Message}");
+                Console.WriteLine($"Directorio no encontrado: {e.Message}");
             }
             catch (IOException e)
             {
-                Console.WriteLine($"I/O error: {e.Message}");
+                Console.WriteLine($"Error de E/S: {e.Message}");
             }
+
             return files;
         }
 

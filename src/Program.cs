@@ -8,6 +8,8 @@ namespace BigQueryUpload
 {
     class Program
     {
+        public static string Year;
+        public static string TaxReturnType;
         static async Task Main(string[] args)
         {
             Console.WriteLine("Program started.");
@@ -20,10 +22,11 @@ namespace BigQueryUpload
 
             var bigQueryService = new BigQueryService(configuration["GoogleCloud:ProjectId"]);
             var xmlUploader = new XmlUploader(bigQueryService);
-            await xmlUploader.UploadEfileJurisdictionSchemaAsync(
-                configuration["BigQuery:Year"],
-                configuration["BigQuery:TaxReturnType"]
-            );
+
+            Year = configuration["BigQuery:Year"];
+            TaxReturnType = configuration["BigQuery:TaxReturnType"];
+
+            await xmlUploader.UploadEfileJurisdictionSchemaAsync(Year, TaxReturnType);
 
             stopwatch.Stop();
             Console.WriteLine($"Program finished. Execution time: {stopwatch.Elapsed.TotalSeconds} seconds.");
